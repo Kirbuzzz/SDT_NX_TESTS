@@ -15,7 +15,9 @@
 #include "sdt.h"
 
 #define PAGE 0x1000
-enum { PS_NONE = 0, PS_FRESH = 1, PS_R = 1 + 1, PS_RW = 3, PS_RX = 5 };   /* estado por pagina */
+/* Estado por pagina. Los valores 1/3/5 SON los permisos de Horizon (R, RW, RX) y se pasan tal cual al kernel;
+ * PS_FRESH es un valor interno (nunca se envia al kernel). */
+enum { PS_NONE = 0, PS_R = 1, PS_RW = 3, PS_RX = 5, PS_FRESH = 0x10 };
 typedef struct { uintptr_t dst; void *src; size_t size; } Chunk;
 typedef struct Region { uintptr_t base; size_t size; uint8_t *ps; Chunk *ch; int nch, cap; VirtmemReservation *rv; } Region;
 static Region **g_reg; static int g_nreg, g_capreg;
