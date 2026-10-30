@@ -11,6 +11,22 @@ void canary_fix(void);                 /* restaura TP+0x28 tras cualquier IPC (v
 void fatal_wait(const char *why);      /* muestra el motivo y espera '+'; no vuelve        */
 extern int g_guest;                    /* 1 mientras se ejecuta codigo de las .so          */
 
+/* ficheros virtuales / funopen (cfile.c) */
+typedef struct CFile CFile;
+CFile *cf_of(const void *f);
+void  *cf_open(const void *cookie, int (*rd)(void *, char *, int), int (*wr)(void *, const char *, int), long (*sk)(void *, long, int), int (*cl)(void *));
+int    cf_getc(CFile *c);
+int    cf_ungetc(CFile *c, int ch);
+size_t cf_fread(CFile *c, void *p, size_t sz, size_t n);
+size_t cf_fwrite(CFile *c, const void *p, size_t sz, size_t n);
+char  *cf_fgets(CFile *c, char *b, int n);
+int    cf_fseek(CFile *c, long off, int wh);
+long   cf_ftell(CFile *c);
+int    cf_feof(CFile *c);
+int    cf_ferror(CFile *c);
+void   cf_clearerr(CFile *c);
+int    cf_close(CFile *c);
+
 /* hilos y TLS del codigo cargado (pthr.c) */
 void     guest_tls_install(void);      /* da bloque TLS (TPIDR_EL0) al hilo actual */
 uint32_t guest_tid(void);              /* id del hilo actual (1 = principal)       */

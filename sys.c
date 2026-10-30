@@ -10,6 +10,10 @@
 #include <errno.h>
 #include <malloc.h>
 #include <setjmp.h>
+#include <wchar.h>
+#include <wctype.h>
+#include <ctype.h>
+#include <strings.h>
 #include "sdt.h"
 
 int *__errno(void);   /* newlib lo declara en errno.h; se repite por claridad */
@@ -100,6 +104,13 @@ static char g_sF[3 * 152];
 static void *g_stdin_p = &g_sF[0], *g_stdout_p = &g_sF[152], *g_stderr_p = &g_sF[304];
 static int is_std(const void *f) { return (const char *)f >= g_sF && (const char *)f < g_sF + sizeof g_sF; }
 static int sh_vfprintf(FILE *f, const char *fmt, va_list ap) {
+    if (cf_of(f)) {
+        va_list ap2; va_copy(ap2, ap);
+        char b[1024]; int n = vsnprintf(b, sizeof b, fmt, ap);
+        if (n >= (int)sizeof b) { char *big = (char *)malloc((size_t)n + 1); vsnprintf(big, (size_t)n + 1, fmt, ap2); cf_fwrite(cf_of(f), big, 1, (size_t)n); free(big); }
+        else if (n > 0) cf_fwrite(cf_of(f), b, 1, (size_t)n);
+        va_end(ap2); return n;
+    }
     if (is_std(f)) { char b[1024]; int n = vsnprintf(b, sizeof b, fmt, ap); LOG("%s", b); return n; }
     return vfprintf(f, fmt, ap);
 }
@@ -107,12 +118,12 @@ static int sh_fprintf(FILE *f, const char *fmt, ...) { va_list ap; va_start(ap, 
 static int sh_vprintf(const char *fmt, va_list ap) { char b[1024]; int n = vsnprintf(b, sizeof b, fmt, ap); LOG("%s", b); return n; }
 static int sh_printf(const char *fmt, ...) { va_list ap; va_start(ap, fmt); int r = sh_vprintf(fmt, ap); va_end(ap); return r; }
 static int sh_puts(const char *s) { LOG("%s\n", s); return 1; }
-static int sh_fputs(const char *s, FILE *f) { if (is_std(f)) { LOG("%s", s); return 1; } return fputs(s, f); }
-static int sh_fputc(int c, FILE *f) { if (is_std(f)) { LOG("%c", c); return c; } return fputc(c, f); }
-static size_t sh_fwrite(const void *p, size_t s, size_t n, FILE *f) { if (is_std(f)) { LOG("%.*s", (int)(s * n), (const char *)p); return n; } return fwrite(p, s, n, f); }
-static int sh_fflush(FILE *f) { return (!f || is_std(f)) ? 0 : fflush(f); }
-static int sh_fclose(FILE *f) { return is_std(f) ? 0 : fclose(f); }
-static int sh_fileno(FILE *f) { return is_std(f) ? (int)(((char *)f - g_sF) / 152) : fileno(f); }
+static int sh_fputs(const char *s, FILE *f) { if (cf_of(f)) return (int)cf_fwrite(cf_of(f), s, 1, strlen(s)); if (is_std(f)) { LOG("%s", s); return 1; } return fputs(s, f); }
+static int sh_fputc(int c, FILE *f) { if (cf_of(f)) { unsigned char ch = (unsigned char)c; return cf_fwrite(cf_of(f), &ch, 1, 1) == 1 ? c : -1; } if (is_std(f)) { LOG("%c", c); return c; } return fputc(c, f); }
+static size_t sh_fwrite(const void *p, size_t s, size_t n, FILE *f) { if (cf_of(f)) return cf_fwrite(cf_of(f), p, s, n); if (is_std(f)) { LOG("%.*s", (int)(s * n), (const char *)p); return n; } return fwrite(p, s, n, f); }
+static int sh_fflush(FILE *f) { return (!f || is_std(f) || cf_of(f)) ? 0 : fflush(f); }
+static int sh_fclose(FILE *f) { if (cf_of(f)) return cf_close(cf_of(f)); return is_std(f) ? 0 : fclose(f); }
+static int sh_fileno(FILE *f) { if (cf_of(f)) return -1; return is_std(f) ? (int)(((char *)f - g_sF) / 152) : fileno(f); }
 static char *sh_strcasestr(const char *h, const char *n) {
     size_t nl = strlen(n);
     if (!nl) return (char *)h;
@@ -165,7 +176,70 @@ static int sh_sigfill(unsigned long *s) { *s = ~0UL; return 0; }
 static int sh_register_atfork(void *a, void *b, void *c, void *d) { (void)a; (void)b; (void)c; (void)d; return 0; }
 static void sh_syslog(int p, const char *f, ...) { (void)p; (void)f; }
 
+
+/* ---- lectura/posicion de stdio con ficheros virtuales (funopen) ---- */
+static size_t sh_fread(void *p, size_t sz, size_t n, FILE *f) { if (cf_of(f)) return cf_fread(cf_of(f), p, sz, n); if (is_std(f)) return 0; return fread(p, sz, n, f); }
+static char  *sh_fgets(char *b, int n, FILE *f) { if (cf_of(f)) return cf_fgets(cf_of(f), b, n); if (is_std(f)) return NULL; return fgets(b, n, f); }
+static int    sh_fgetc(FILE *f) { if (cf_of(f)) return cf_getc(cf_of(f)); if (is_std(f)) return -1; return fgetc(f); }
+static int    sh_ungetc(int c, FILE *f) { if (cf_of(f)) return cf_ungetc(cf_of(f), c); if (is_std(f)) return -1; return ungetc(c, f); }
+static int    sh_fseek(FILE *f, long o, int w) { if (cf_of(f)) return cf_fseek(cf_of(f), o, w); if (is_std(f)) return -1; return fseek(f, o, w); }
+static long   sh_ftell(FILE *f) { if (cf_of(f)) return cf_ftell(cf_of(f)); if (is_std(f)) return -1; return ftell(f); }
+static void   sh_rewind(FILE *f) { sh_fseek(f, 0, 0); }
+static int    sh_feof(FILE *f) { if (cf_of(f)) return cf_feof(cf_of(f)); if (is_std(f)) return 1; return feof(f); }
+static int    sh_ferror(FILE *f) { if (cf_of(f)) return cf_ferror(cf_of(f)); if (is_std(f)) return 0; return ferror(f); }
+static void   sh_clearerr(FILE *f) { if (cf_of(f)) cf_clearerr(cf_of(f)); else if (!is_std(f)) clearerr(f); }
+static int    sh_setvbuf(FILE *f, char *b, int m, size_t n) { if (cf_of(f) || is_std(f)) return 0; return setvbuf(f, b, m, n); }
+static FILE  *sh_fdopen(int fd, const char *m) { return fdopen(fd, m); }
+static int    sh_fscanf(FILE *f, const char *fmt, ...) { (void)f; (void)fmt; return -1; }   /* EOF: no se necesita aun */
+static int    sh_vasprintf(char **out, const char *fmt, va_list ap) {
+    va_list a2; va_copy(a2, ap);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    if (n < 0) { va_end(a2); return -1; }
+    *out = (char *)malloc((size_t)n + 1);
+    if (!*out) { va_end(a2); return -1; }
+    vsnprintf(*out, (size_t)n + 1, fmt, a2); va_end(a2); return n;
+}
+
+/* ---- variantes con locale (_l): se ignora el locale ---- */
+static int sh_isdigit_l(int c, void *l) { (void)l; return isdigit(c); }
+static int sh_islower_l(int c, void *l) { (void)l; return islower(c); }
+static int sh_isupper_l(int c, void *l) { (void)l; return isupper(c); }
+static int sh_isxdigit_l(int c, void *l) { (void)l; return isxdigit(c); }
+static int sh_iswlower_l(wint_t c, void *l) { (void)l; return iswlower(c); }
+static long long sh_strtoll_l(const char *s, char **e, int b, void *l) { (void)l; return strtoll(s, e, b); }
+static unsigned long long sh_strtoull_l(const char *s, char **e, int b, void *l) { (void)l; return strtoull(s, e, b); }
+static long double sh_strtold_l(const char *s, char **e, void *l) { (void)l; return strtold(s, e); }
+static size_t sh_strftime_l(char *s, size_t n, const char *f, const BTm *b, void *l) { (void)l; return sh_strftime(s, n, f, b); }
+
+/* ---- varios ---- */
+static char *sh_basename(char *p) { char *b = strrchr(p, '/'); return b ? b + 1 : p; }
+static long  sh_clock(void) { return (long)(mono_ns() / 1000); }          /* CLOCKS_PER_SEC de Android = 1000000 */
+static void *sh_memrchr(const void *s, int c, size_t n) { const unsigned char *p = (const unsigned char *)s + n; while (n--) if (*--p == (unsigned char)c) return (void *)p; return NULL; }
+static int   sh_fnmatch(const char *p, const char *s, int f) { (void)p; (void)s; (void)f; return 1; }   /* FNM_NOMATCH */
+
+/* ---- datos del NDK de medios: son punteros a cadenas, no funciones ---- */
+#define AMF(n, s) static const char *g_amf_##n = s;
+AMF(WIDTH, "width") AMF(HEIGHT, "height") AMF(MIME, "mime") AMF(DURATION, "durationUs") AMF(FRAME_RATE, "frame-rate")
+AMF(COLOR_FORMAT, "color-format") AMF(COLOR_RANGE, "color-range") AMF(COLOR_STANDARD, "color-standard") AMF(STRIDE, "stride")
+AMF(SLICE_HEIGHT, "slice-height") AMF(CHANNEL_COUNT, "channel-count") AMF(SAMPLE_RATE, "sample-rate") AMF(LANGUAGE, "language")
+AMF(ROTATION, "rotation-degrees") AMF(ENCODER_DELAY, "encoder-delay")
+#define AMFE(n) {"AMEDIAFORMAT_KEY_" #n, (void *)&g_amf_##n}
+
 const Shim g_shims_sys[] = {
+    {"funopen", (void *)cf_open}, {"fread", (void *)sh_fread}, {"fgets", (void *)sh_fgets}, {"fgetc", (void *)sh_fgetc}, {"getc", (void *)sh_fgetc},
+    {"ungetc", (void *)sh_ungetc}, {"fseek", (void *)sh_fseek}, {"fseeko", (void *)sh_fseek}, {"ftell", (void *)sh_ftell}, {"ftello", (void *)sh_ftell},
+    {"rewind", (void *)sh_rewind}, {"feof", (void *)sh_feof}, {"ferror", (void *)sh_ferror}, {"clearerr", (void *)sh_clearerr},
+    {"setvbuf", (void *)sh_setvbuf}, {"fdopen", (void *)sh_fdopen}, {"fscanf", (void *)sh_fscanf}, {"vasprintf", (void *)sh_vasprintf},
+    {"vsscanf", (void *)vsscanf},
+    {"mbrlen", (void *)mbrlen}, {"mbrtowc", (void *)mbrtowc}, {"mbtowc", (void *)mbtowc}, {"mbsrtowcs", (void *)mbsrtowcs}, {"mbsnrtowcs", (void *)mbsnrtowcs},
+    {"wcrtomb", (void *)wcrtomb}, {"wcsnrtombs", (void *)wcsnrtombs}, {"wcslen", (void *)wcslen}, {"wmemchr", (void *)wmemchr},
+    {"wmemcpy", (void *)wmemcpy}, {"wmemmove", (void *)wmemmove}, {"wmemset", (void *)wmemset},
+    {"isdigit_l", (void *)sh_isdigit_l}, {"islower_l", (void *)sh_islower_l}, {"isupper_l", (void *)sh_isupper_l}, {"isxdigit_l", (void *)sh_isxdigit_l},
+    {"iswlower_l", (void *)sh_iswlower_l}, {"strtoll_l", (void *)sh_strtoll_l}, {"strtoull_l", (void *)sh_strtoull_l}, {"strtold_l", (void *)sh_strtold_l},
+    {"strftime_l", (void *)sh_strftime_l},
+    {"basename", (void *)sh_basename}, {"clock", (void *)sh_clock}, {"memrchr", (void *)sh_memrchr}, {"fnmatch", (void *)sh_fnmatch},
+    AMFE(WIDTH), AMFE(HEIGHT), AMFE(MIME), AMFE(DURATION), AMFE(FRAME_RATE), AMFE(COLOR_FORMAT), AMFE(COLOR_RANGE), AMFE(COLOR_STANDARD),
+    AMFE(STRIDE), AMFE(SLICE_HEIGHT), AMFE(CHANNEL_COUNT), AMFE(SAMPLE_RATE), AMFE(LANGUAGE), AMFE(ROTATION), AMFE(ENCODER_DELAY),
     {"__memcpy_chk", (void *)sh_memcpy_chk}, {"__memmove_chk", (void *)sh_memmove_chk}, {"__strlen_chk", (void *)sh_strlen_chk},
     {"__strchr_chk", (void *)sh_strchr_chk}, {"__strrchr_chk", (void *)sh_strrchr_chk}, {"__strncpy_chk2", (void *)sh_strncpy_chk2},
     {"__vsnprintf_chk", (void *)sh_vsnprintf_chk},
@@ -190,9 +264,7 @@ const Shim g_shims_sys[] = {
     {"printf", (void *)sh_printf}, {"vprintf", (void *)sh_vprintf}, {"puts", (void *)sh_puts}, {"fprintf", (void *)sh_fprintf},
     {"vfprintf", (void *)sh_vfprintf}, {"fputs", (void *)sh_fputs}, {"fputc", (void *)sh_fputc}, {"fwrite", (void *)sh_fwrite},
     {"fflush", (void *)sh_fflush}, {"fileno", (void *)sh_fileno}, {"strcasestr", (void *)sh_strcasestr}, {"fclose", (void *)sh_fclose}, {"perror", (void *)sh_perror},
-    {"fopen", (void *)fopen}, {"fread", (void *)fread}, {"fseek", (void *)fseek}, {"ftell", (void *)ftell}, {"fgets", (void *)fgets},
-    {"feof", (void *)feof}, {"ferror", (void *)ferror}, {"clearerr", (void *)clearerr}, {"setvbuf", (void *)setvbuf},
-    {"sprintf", (void *)sprintf}, {"vsprintf", (void *)vsprintf}, {"sscanf", (void *)sscanf}, {"remove", (void *)remove}, {"rename", (void *)rename},
+    {"fopen", (void *)fopen}, {"sprintf", (void *)sprintf}, {"vsprintf", (void *)vsprintf}, {"sscanf", (void *)sscanf}, {"remove", (void *)remove}, {"rename", (void *)rename},
     {"strerror", (void *)strerror}, {"strerror_r", (void *)sh_strerror_r}, {"strndup", (void *)strndup}, {"strtok", (void *)strtok},
     {"memalign", (void *)memalign}, {"posix_memalign", (void *)sh_posix_memalign},
     {"sincos", (void *)sh_sincos}, {"sincosf", (void *)sh_sincosf}, {"lldiv", (void *)sh_lldiv},

@@ -60,6 +60,7 @@ static long sh_pwrite(int fd, const void *b, size_t n, long off) {
     iounlock();
     return r;
 }
+static long sh_pwrite_chk(int fd, const void *b, size_t n, long off, size_t bl) { (void)bl; return sh_pwrite(fd, b, n, off); }
 static long sh_write_chk(int fd, const void *b, size_t n, size_t bl) { (void)bl; return write(fd, b, n); }
 
 /* struct stat de bionic arm64 (128 bytes) */
@@ -119,7 +120,7 @@ const Shim g_shims_vfs[] = {
     {"open", (void *)sh_open}, {"open64", (void *)sh_open}, {"__open_2", (void *)sh_open_2},
     {"close", (void *)close}, {"read", (void *)read}, {"write", (void *)write}, {"__write_chk", (void *)sh_write_chk},
     {"pread", (void *)vfs_pread}, {"pread64", (void *)vfs_pread}, {"__pread_chk", (void *)sh_pread_chk},
-    {"pwrite", (void *)sh_pwrite}, {"pwrite64", (void *)sh_pwrite},
+    {"pwrite", (void *)sh_pwrite}, {"__pwrite_chk", (void *)sh_pwrite_chk}, {"pwrite64", (void *)sh_pwrite},
     {"lseek", (void *)sh_lseek}, {"lseek64", (void *)sh_lseek},
     {"stat", (void *)sh_stat}, {"lstat", (void *)sh_stat}, {"stat64", (void *)sh_stat}, {"fstat", (void *)sh_fstat}, {"fstat64", (void *)sh_fstat},
     {"access", (void *)sh_access},
