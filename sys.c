@@ -119,6 +119,12 @@ static char *sh_strcasestr(const char *h, const char *n) {
     for (; *h; h++) if (!strncasecmp(h, n, nl)) return (char *)h;
     return NULL;
 }
+/* newlib de la Switch no trae posix_memalign: se hace con memalign */
+static int sh_posix_memalign(void **o, size_t a, size_t n) {
+    void *p = memalign(a < sizeof(void *) ? sizeof(void *) : a, n);
+    if (!p) return ENOMEM;
+    *o = p; return 0;
+}
 static void sh_perror(const char *m) { LOG("perror: %s: %s\n", m ? m : "", strerror(errno)); }
 static int sh_strerror_r(int e, char *b, size_t n) { snprintf(b, n, "%s", strerror(e)); return 0; }
 
@@ -188,7 +194,7 @@ const Shim g_shims_sys[] = {
     {"feof", (void *)feof}, {"ferror", (void *)ferror}, {"clearerr", (void *)clearerr}, {"setvbuf", (void *)setvbuf},
     {"sprintf", (void *)sprintf}, {"vsprintf", (void *)vsprintf}, {"sscanf", (void *)sscanf}, {"remove", (void *)remove}, {"rename", (void *)rename},
     {"strerror", (void *)strerror}, {"strerror_r", (void *)sh_strerror_r}, {"strndup", (void *)strndup}, {"strtok", (void *)strtok},
-    {"memalign", (void *)memalign}, {"posix_memalign", (void *)posix_memalign},
+    {"memalign", (void *)memalign}, {"posix_memalign", (void *)sh_posix_memalign},
     {"sincos", (void *)sh_sincos}, {"sincosf", (void *)sh_sincosf}, {"lldiv", (void *)sh_lldiv},
     {"syslog", (void *)sh_syslog}, {"openlog", (void *)sh_zero}, {"closelog", (void *)sh_zero},
     {"newlocale", (void *)sh_newlocale}, {"freelocale", (void *)sh_freelocale}, {"uselocale", (void *)sh_uselocale},
