@@ -46,15 +46,31 @@ static Region *reserve(size_t size) {
     return g;
 }
 
-/* fija el permiso de Horizon a un rango de paginas, por tramos que comparten estado previo */
+static Chunk *chunk_at(Region *r, size_t page) {
+    uintptr_t a = r->base + page * PAGE;
+    for (int i = 0; i < r->nch; i++) if (a >= r->ch[i].dst && a < r->ch[i].dst + r->ch[i].size) return &r->ch[i];
+    return NULL;
+}
+/* fija el permiso de Horizon a un rango de paginas, por tramos que comparten estado previo.
+ * Un tramo NUNCA cruza el limite entre dos mapeos (chunks): el kernel exige que todo el rango sea del mismo bloque. */
 static int set_runs(Region *r, size_t p0, size_t p1, int hp) {
+    static int warned_rw_r;
     for (size_t p = p0; p < p1; ) {
-        size_t q = p; while (q < p1 && r->ps[q] == r->ps[p]) q++;
-        if (r->ps[p] == PS_NONE) { p = q; continue; }          /* paginas sin mapear: nada que hacer */
+        if (r->ps[p] == PS_NONE) { p++; continue; }              /* paginas sin mapear: nada que hacer */
+        Chunk *c = chunk_at(r, p);
+        size_t cend = c ? (c->dst - r->base + c->size) / PAGE : p1;
+        size_t q = p + 1;
+        while (q < p1 && q < cend && r->ps[q] == r->ps[p]) q++;
         if (r->ps[p] != hp) {
             Result rc = svcSetProcessMemoryPermission(H(), r->base + p * PAGE, (q - p) * PAGE, hp);
-            if (R_FAILED(rc)) { LOG("vm: permiso %d fallo en %lx +%zx (estado previo %d) rc=0x%x\n", hp, (unsigned long)(r->base + p * PAGE), (q - p) * PAGE, r->ps[p], rc); return -1; }
-            memset(r->ps + p, hp, q - p);
+            if (R_FAILED(rc)) {
+                if (hp == PS_R && r->ps[p] == PS_RW) {           /* RW -> R puede no estar permitido: se deja en RW (inofensivo) */
+                    if (!warned_rw_r) { warned_rw_r = 1; LOG("vm: RW->R rechazado por el kernel (rc=0x%x); se deja en RW\n", rc); }
+                } else {
+                    LOG("vm: permiso %d fallo en %lx +%zx (estado previo %d) rc=0x%x\n", hp, (unsigned long)(r->base + p * PAGE), (q - p) * PAGE, r->ps[p], rc);
+                    return -1;
+                }
+            } else memset(r->ps + p, hp, q - p);
         }
         p = q;
     }

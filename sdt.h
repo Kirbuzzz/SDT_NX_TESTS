@@ -60,7 +60,13 @@ ElfModule *mod_find(const char *name);
 void *mod_export(const char *sym);
 
 /* JNI falso (jni.c) */
+/* rutas del port en la SD (las devuelve el JNI falso a Unity) */
+#define SDT_BASE  "sdmc:/switch/sdt"
+#define SDT_LIB   SDT_BASE "/lib"
+#define SDT_FILES SDT_BASE "/files"
+#define SDT_APK   SDT_BASE "/game.apk"
 void  jni_init(void);
+void *jni_new_object(const char *cls);
 void *jni_vm(void);
 void *jni_env(void);
 void *jni_new_string(const char *utf);

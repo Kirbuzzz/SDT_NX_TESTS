@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
     mkdir(DIR_BASE, 0777); mkdir(DIR_LIB, 0777);
     g_logf = fopen(DIR_BASE "/log.txt", "w");
     g_unres = fopen(DIR_BASE "/unresolved.tsv", "w");
-    LOG("SDT loader - hito 4\n");
+    LOG("SDT loader - hito 5a\n");
     guest_tls_install();
 
     /* Entorno que espera libil2cpp (cargador de Mach-O): el APK y las carpetas de datos */
@@ -109,6 +109,22 @@ int main(int argc, char **argv) {
     uint8_t ok = ((uint8_t (*)(void *, void *, void *))fn)(jni_env(), cls, dir);
     g_guest = 0;
     LOG("<- NativeLoader.load devolvio %d\n", ok);
+
+    /* hito 5a: arrancar Unity -> UnityPlayer.initJni(Context). Unity preguntara por rutas y servicios de Android
+     * al JNI falso; cada pregunta queda anotada en el log (JNI call ... / JNI GetField ...). */
+    LOG("\n=== hito 5a: UnityPlayer.initJni ===\n");
+    void *ij = NULL, *upc = NULL;
+    if (jni_find_native("com/unity3d/player/UnityPlayer", "initJni", &ij, &upc)) {
+        LOG("libunity no registro UnityPlayer.initJni\n");
+    } else {
+        void *self = jni_new_object("com/unity3d/player/UnityPlayer");
+        void *ctx  = jni_new_object("android/app/Activity");
+        LOG("-> initJni(this=%p, context=%p) en %p\n", self, ctx, ij);
+        g_guest = 1;
+        uint8_t r = ((uint8_t (*)(void *, void *, void *))ij)(jni_env(), self, ctx);
+        g_guest = 0;
+        LOG("<- initJni devolvio %d\n", r);
+    }
 
     LOG("\nListo. Pulsa + para salir.\n");
     while (appletMainLoop()) {

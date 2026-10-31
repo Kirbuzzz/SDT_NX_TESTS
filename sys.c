@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <malloc.h>
 #include <setjmp.h>
+#include <fcntl.h>
 #include <wchar.h>
 #include <wctype.h>
 #include <ctype.h>
@@ -211,6 +212,29 @@ static unsigned long long sh_strtoull_l(const char *s, char **e, int b, void *l)
 static long double sh_strtold_l(const char *s, char **e, void *l) { (void)l; return strtold(s, e); }
 static size_t sh_strftime_l(char *s, size_t n, const char *f, const BTm *b, void *l) { (void)l; return sh_strftime(s, n, f, b); }
 
+/* ---- funciones que la capa de iOS (facade) busca por nombre en bionic ---- */
+static void *sh_memset_chk(void *d, int c, size_t n, size_t dl) { (void)dl; return memset(d, c, n); }
+static void  sh_arc4random_buf(void *b, size_t n) {
+    static uint64_t st; if (!st) st = armGetSystemTick() | 1;
+    unsigned char *p = (unsigned char *)b;
+    for (size_t i = 0; i < n; i++) { st ^= st << 13; st ^= st >> 7; st ^= st << 17; p[i] = (unsigned char)(st >> 24); }
+}
+static int   sh_gethostname(char *b, size_t n) { snprintf(b, n, "switch"); return 0; }
+static int   sh_mkstemp(char *t) {
+    size_t l = strlen(t);
+    if (l < 6 || strcmp(t + l - 6, "XXXXXX")) { errno = EINVAL; return -1; }
+    static unsigned c;
+    for (int k = 0; k < 100; k++) {
+        snprintf(t + l - 6, 7, "%06x", (unsigned)((mono_ns() >> 8) + c++) & 0xffffff);
+        int fd = open(t, O_RDWR | O_CREAT | O_EXCL, 0600);
+        if (fd >= 0) return fd;
+    }
+    return -1;
+}
+static const char *sh_setlocale(int c, const char *l) { (void)c; (void)l; return "C"; }
+static size_t sh_strlcpy(char *d, const char *s, size_t n) { size_t l = strlen(s); if (n) { size_t k = l >= n ? n - 1 : l; memcpy(d, s, k); d[k] = 0; } return l; }
+static size_t sh_strlcat(char *d, const char *s, size_t n) { size_t dl = strnlen(d, n), sl = strlen(s); if (dl == n) return n + sl; size_t k = sl < n - dl - 1 ? sl : n - dl - 1; memcpy(d + dl, s, k); d[dl + k] = 0; return dl + sl; }
+
 /* ---- varios ---- */
 static char *sh_basename(char *p) { char *b = strrchr(p, '/'); return b ? b + 1 : p; }
 static long  sh_clock(void) { return (long)(mono_ns() / 1000); }          /* CLOCKS_PER_SEC de Android = 1000000 */
@@ -226,6 +250,13 @@ AMF(ROTATION, "rotation-degrees") AMF(ENCODER_DELAY, "encoder-delay")
 #define AMFE(n) {"AMEDIAFORMAT_KEY_" #n, (void *)&g_amf_##n}
 
 const Shim g_shims_sys[] = {
+    {"__memset_chk", (void *)sh_memset_chk}, {"arc4random_buf", (void *)sh_arc4random_buf}, {"gethostname", (void *)sh_gethostname},
+    {"mkstemp", (void *)sh_mkstemp}, {"setlocale", (void *)sh_setlocale}, {"strlcpy", (void *)sh_strlcpy}, {"strlcat", (void *)sh_strlcat},
+    {"getegid", (void *)sh_getuid}, {"pthread_atfork", (void *)sh_zero},
+    {"dup", (void *)sh_minus1}, {"dup2", (void *)sh_minus1}, {"pipe", (void *)sh_minus1}, {"poll", (void *)sh_minus1},
+    {"select", (void *)sh_minus1}, {"truncate", (void *)sh_minus1},
+    {"asin", (void *)asin}, {"atan", (void *)atan}, {"hypot", (void *)hypot}, {"log10", (void *)log10},
+    {"bsearch", (void *)bsearch}, {"div", (void *)div},
     {"funopen", (void *)cf_open}, {"fread", (void *)sh_fread}, {"fgets", (void *)sh_fgets}, {"fgetc", (void *)sh_fgetc}, {"getc", (void *)sh_fgetc},
     {"ungetc", (void *)sh_ungetc}, {"fseek", (void *)sh_fseek}, {"fseeko", (void *)sh_fseek}, {"ftell", (void *)sh_ftell}, {"ftello", (void *)sh_ftell},
     {"rewind", (void *)sh_rewind}, {"feof", (void *)sh_feof}, {"ferror", (void *)sh_ferror}, {"clearerr", (void *)sh_clearerr},
